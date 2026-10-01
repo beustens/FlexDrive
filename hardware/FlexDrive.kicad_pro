@@ -637,6 +637,12 @@
           "label": "Sim.Pins",
           "name": "Sim.Pins",
           "show": false
+        },
+        {
+          "group_by": false,
+          "label": "LCSC",
+          "name": "LCSC",
+          "show": true
         }
       ],
       "filter_string": "",
@@ -687,7 +693,7 @@
         "uuid": "002a8a11-d0e4-41f6-aa84-1e0e3b0763a1"
       }
     ],
-    "used_designators": "Q1-6,Y1,D1-9,#PWR1-59,RN1-3,C1-28,U1-4,R1-26,H1-2,L1-2,#FLG1-2,J1-6",
+    "used_designators": "Q1-6,Y1,#PWR1-59,D1-9,RN1-3,C1-28,U1-4,R1-26,H1-2,L1-2,#FLG1-2,J1-6",
     "variants": []
   },
   "sheets": [
