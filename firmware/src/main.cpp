@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
 #include <Preferences.h> // ESP32 non-volatile storage (NVS, in flash)
+#include <esp_task_wdt.h> // to disable FreeRTOS task watchdog
 
 #define ADC_PIN 4
 #define DIGI_PIN 10
@@ -12,14 +13,14 @@ const int maxPolePairs = 64; // Upper sanity limit for the Commander command
 const char* const prefsNamespace = "flexdrive";
 const char* const prefsKeyPolePairs = "pp";
 const float supplyVoltage = 24.0;
-const float motorVoltage = 16.0; // Can be changed via Commander ("MLU<voltage>\n")
+const float motorVoltage = 12.0; // Can be changed via Commander ("MLU<voltage>\n"). For open loop, keep very low (2...6 V)!
 
 // Firmware version
 typedef struct {
 	uint8_t major;
 	uint8_t minor;
 } FWVersion;
-FWVersion fwVer = {1, 1};
+FWVersion fwVer = {1, 2};
 
 // Motor instance
 BLDCMotor motor(defaultPolePairs);
@@ -101,7 +102,7 @@ void doPolePairs(char* cmd) {
 }
 
 // Analog input
-const uint16_t adcThresh = 20;
+const uint16_t adcThresh = 100;
 
 // PWM pulse measurement
 volatile uint32_t pulseStart = 0;
@@ -122,6 +123,7 @@ void IRAM_ATTR handlePWM() {
 }
 
 void setup() {
+	esp_task_wdt_deinit(); // disable watchdog to prevent 2-second hiccups in loop
 	Serial.begin(115200);
 
 	// GPIO
@@ -145,13 +147,14 @@ void setup() {
 
 	// Driver & Motor setup
 	driver.voltage_power_supply = supplyVoltage;
+	driver.pwm_frequency = 15000;
 	driver.init();
 
 	motor.torque_controller = TorqueControlType::voltage; // set the torque control type
 	motor.controller = MotionControlType::torque;
 	// motor.controller = MotionControlType::velocity;
-	motor.updateVoltageLimit(motorVoltage); // for open loop, keep very low (2...6 V)!
-	motor.voltage_sensor_align = 3.0;
+	motor.updateVoltageLimit(motorVoltage);
+	motor.voltage_sensor_align = 1.0;
 	motor.velocity_limit = 20.0; // for position control
 	// For closed loop operation
 	motor.PID_velocity.P = 0.1;
@@ -175,38 +178,40 @@ void setup() {
 }
 
 void loop() {
-	// Iterative FOC function
-	motor.loopFOC();
+	while (true) {
+		// Iterative FOC function
+		motor.loopFOC();
 
-	// Iterative function setting and calculating the angle/position loop
-	// This function can be run at much lower frequency than loopFOC function
-	motor.move();
+		// Iterative function setting and calculating the angle/position loop
+		// This function can be run at much lower frequency than loopFOC function
+		motor.move();
 
-	// Commander interface with the user
-	command.run();
+		// Commander interface with the user
+		command.run();
 
-	// Output configured variable values
-	motor.monitor();
+		// Output configured variable values
+		motor.monitor();
 
-	// Use hardware interface
-	static uint32_t oldTime = 0;
-	uint32_t newTime = millis();
-	if (newTime - oldTime > 50) {
-		oldTime = newTime;
+		// Use hardware interface
+		static uint32_t oldTime = 0;
+		uint32_t newTime = millis();
+		if (newTime - oldTime > 50) {
+			oldTime = newTime;
 
-		float duty;
-		uint16_t adcVal = analogRead(ADC_PIN);
-		if (pulseWidth >= 1000 && pulseWidth <= 2000) {
-			// PWM
-			duty = (static_cast<float>(pulseWidth) - 1500.0) / 500.0;
-			// Serial.printf("PWM: %d\n", pulseWidth);
-			motor.target = motor.voltage_limit * duty;
-		} else if (adcVal >= adcThresh) {
-			// Analog
-			// Serial.printf("ADC: %d\n", adcVal);
-			duty = static_cast<float>(adcVal - adcThresh) / (4095.0 - adcThresh);
-			if (digitalRead(DIGI_PIN) == LOW) duty = -duty;
-			motor.target = motor.voltage_limit * duty;
+			float duty;
+			uint16_t adcVal = analogRead(ADC_PIN);
+			if (pulseWidth >= 1000 && pulseWidth <= 2000) {
+				// PWM
+				duty = (static_cast<float>(pulseWidth) - 1500.0) / 500.0;
+				// Serial.printf("PWM: %d\n", pulseWidth);
+				motor.target = motor.voltage_limit * duty;
+			} else if (adcVal >= adcThresh) {
+				// Analog
+				// Serial.printf("ADC: %d\n", adcVal);
+				duty = static_cast<float>(adcVal - adcThresh) / (4095.0 - adcThresh);
+				if (digitalRead(DIGI_PIN) == LOW) duty = -duty;
+				motor.target = motor.voltage_limit * duty;
+			}
 		}
 	}
 }
